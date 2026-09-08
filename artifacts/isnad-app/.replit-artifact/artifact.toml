@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "إسناد — مديرك المالي الشخصي"
+description = "نسخة تشغيل مباشرة من تطبيق إسناد المالي الشخصي كما وردت في المشروع المرفق، مع إدارة الحسابات والعمليات والتقارير والتوزيع والإغلاق والإعدادات."
+version = "1.0.0"
+id = "artifacts/isnad-app"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24638
+
+[services.development]
+run = "pnpm --filter @workspace/isnad-app run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/isnad-app", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/isnad-app/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24638"
+BASE_PATH = "/"

@@ -1,0 +1,19 @@
+{
+  "name": "إسناد — مديرك المالي الشخصي",
+  "short_name": "إسناد",
+  "description": "نظام إدارة مالية شخصية ومحاسبة بالقيد المزدوج، يعمل بالكامل دون إنترنت.",
+  "start_url": "index.html",
+  "scope": "./",
+  "id": "isnad-app",
+  "display": "standalone",
+  "orientation": "portrait",
+  "lang": "ar",
+  "dir": "rtl",
+  "background_color": "#f7f8f7",
+  "theme_color": "#0f6b5c",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

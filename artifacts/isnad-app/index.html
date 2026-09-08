@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<link rel="manifest" href="web/manifest.json" />
+<meta name="theme-color" content="#0f6b5c" />
+<link rel="icon" href="web/icons/icon-192.png" />
+<link rel="apple-touch-icon" href="web/icons/icon-192.png" />
+<title>إسناد — مديرك المالي الشخصي</title>
+<style>
+  :root {
+    --primary: #0f6b5c;
+    --primary-dark: #0a4a40;
+    --bg: #f7f8f7;
+    --card: #ffffff;
+    --border: #e2e5e2;
+    --text: #1c2b28;
+    --muted: #6b7873;
+    --danger: #b3352a;
+    --success: #1c7a4d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+  }
+  header {
+    background: var(--primary);
+    color: white;
+    padding: 14px 16px;
+    font-size: 18px;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  nav {
+    display: flex;
+    overflow-x: auto;
+    background: var(--primary-dark);
+    position: sticky;
+    top: 48px;
+    z-index: 9;
+  }
+  nav button {
+    flex: 1;
+    min-width: 90px;
+    background: transparent;
+    border: none;
+    color: #cfe8e0;
+    padding: 12px 8px;
+    font-size: 14px;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+  }
+  nav button.active {
+    color: white;
+    border-bottom-color: #ffffff;
+    font-weight: 700;
+  }
+  main {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 16px;
+    padding-bottom: 80px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 12px;
+  }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  label { display: block; font-size: 13px; margin: 10px 0 4px; color: var(--muted); }
+  input, select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 15px;
+    background: white;
+    color: var(--text);
+  }
+  button.primary {
+    background: var(--primary);
+    color: white;
+    border: none;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 15px;
+    width: 100%;
+    margin-top: 14px;
+    cursor: pointer;
+  }
+  button.primary:active { background: var(--primary-dark); }
+  .balance-pos { color: var(--success); font-weight: 700; }
+  .balance-neg { color: var(--danger); font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 8px 6px; text-align: right; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .tag { display: inline-block; background: #eef3f1; border-radius: 6px; padding: 2px 8px; font-size: 12px; color: var(--primary-dark); }
+  .error { background: #fdecea; color: var(--danger); padding: 10px; border-radius: 8px; font-size: 13px; margin-top: 10px; }
+  .success { background: #eafaf0; color: var(--success); padding: 10px; border-radius: 8px; font-size: 13px; margin-top: 10px; }
+  .empty { color: var(--muted); text-align: center; padding: 24px 0; font-size: 14px; }
+  .fab-add { background: var(--primary); color: white; border: none; width: 36px; height: 36px; min-width: 36px; border-radius: 50%; font-size: 20px; line-height: 1; cursor: pointer; }
+  .btn-secondary { background: none; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; color: var(--text); }
+  .btn-danger { background: none; border: 1px solid var(--danger); border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; color: var(--danger); }
+  .tx-list { margin-top: 4px; }
+  .tx-row { padding: 10px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .tx-row:last-child { border-bottom: none; }
+  .tx-row-main { display: flex; justify-content: space-between; align-items: center; margin: 4px 0; }
+  .tx-type { font-weight: 600; }
+  .tx-amount { font-weight: 700; }
+  .acct-group { border-bottom: 1px solid var(--border); }
+  .acct-group:last-child { border-bottom: none; }
+  .acct-group-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; cursor: pointer; font-weight: 600; }
+  .acct-group-body { padding: 0 0 12px 0; }
+  .acct-row { padding: 8px 0; border-top: 1px solid var(--border); cursor: pointer; }
+  .acct-row:first-child { border-top: none; }
+  .report-doc { font-family: "Segoe UI", Tahoma, Arial, sans-serif; color: var(--text); }
+  .report-header { text-align: center; border-bottom: 2px solid var(--text); padding-bottom: 10px; margin-bottom: 14px; }
+  .report-app-name { font-size: 11px; color: var(--muted); letter-spacing: 0.5px; }
+  .report-doc h1 { font-size: 19px; margin: 4px 0 6px; }
+  .report-meta { color: var(--muted); font-size: 12.5px; }
+  .report-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .report-table thead { display: table-header-group; }
+  .report-table th { border-bottom: 2px solid var(--text); padding: 7px 8px; text-align: right; font-weight: 700; background: #f5f6f5; }
+  .report-table td { border-bottom: 1px solid var(--border); padding: 7px 8px; text-align: right; }
+  .report-table tr { page-break-inside: avoid; }
+  .report-totals { margin-top: 14px; border-top: 2px solid var(--text); padding-top: 10px; display: flex; flex-direction: column; gap: 5px; font-size: 13px; max-width: 320px; margin-inline-start: auto; }
+  .report-total-row { display: flex; justify-content: space-between; gap: 16px; }
+  .report-total-row.final { font-weight: 700; font-size: 16px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; color: var(--primary-dark); }
+  .report-footer { margin-top: 20px; font-size: 11px; color: var(--muted); text-align: center; }
+  @media print {
+    @page { size: A4; margin: 14mm 12mm; }
+    header, nav, #btn-close-report, #btn-print-report, #reports-controls, #reports-actions { display: none !important; }
+    #report-overlay { position: static !important; }
+    body { background: white; }
+    main { max-width: none; padding: 0; }
+    .report-doc { font-size: 12px; }
+    .report-table th { background: #f5f6f5 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<header id="app-header">إسناد — مديرك المالي الشخصي</header>
+<nav id="app-nav">
+  <button data-screen="dashboard" class="active">الرئيسية</button>
+  <button data-screen="accounts">الحسابات والأوعية</button>
+  <button data-screen="transactions">العمليات</button>
+  <button data-screen="reports">التقارير</button>
+  <button data-screen="distribution">الخطة</button>
+  <button data-screen="closing">إغلاق الشهر</button>
+  <button data-screen="settings">الإعدادات</button>
+</nav>
+<main id="app-main">
+  <div class="empty">جارٍ التحميل…</div>
+</main>
+<script type="module" src="/web/app.ts"></script>
+</body>
+</html>
