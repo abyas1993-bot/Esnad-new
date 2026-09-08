@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "إسناد",
+    "slug": "isnad",
+    "version": "1.0.0",
+    "android": {
+      "package": "com.isnad.app"
+    }
+  }
+}
