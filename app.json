@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "236cc762-ff9c-4012-b99d-dcc803df0fa0"
+      }
+    },
+    "android": {
+      "package": "com.isnad.app"
+    }
+  }
+}
