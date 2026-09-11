@@ -1,3 +1,5 @@
+import { Capacitor } from "@capacitor/core";
+import { Printer } from "@capgo/capacitor-printer";
 // ============================================================
 // إسناد — تطبيق الويب (PWA). كل شاشة تستدعي Repository الحقيقي فقط.
 // لا يوجد أي state مستقل عن قاعدة البيانات — كل عرض يُعاد تحميله من التخزين.
@@ -234,7 +236,7 @@ async function showAccountReport(accountId: string) {
     </div>`;
   document.body.appendChild(overlay);
   document.getElementById("btn-close-report")!.addEventListener("click", () => overlay.remove());
-  document.getElementById("btn-print-report")!.addEventListener("click", () => window.print());
+  document.getElementById("btn-print-report")!.addEventListener("click", () => { void printReport(); });
 }
 
 // ============================================================
@@ -369,7 +371,7 @@ async function renderReportsScreen() {
         <div id="reports-print-area">${renderReportToHtml(report)}</div>
         <div id="reports-actions"><button class="primary" id="btn-print-report">طباعة</button></div>
       `;
-      document.getElementById("btn-print-report")!.addEventListener("click", () => window.print());
+      document.getElementById("btn-print-report")!.addEventListener("click", () => { void printReport(); });
     } else if (t === "transaction_log") {
       const fromDate = (document.getElementById("report-from") as HTMLInputElement).value || undefined;
       const toDate = (document.getElementById("report-to") as HTMLInputElement).value || undefined;
@@ -422,7 +424,7 @@ async function renderReportsScreen() {
         </div>
         <div id="reports-actions"><button class="primary" id="btn-print-report">طباعة</button></div>
       `;
-      document.getElementById("btn-print-report")!.addEventListener("click", () => window.print());
+      document.getElementById("btn-print-report")!.addEventListener("click", () => { void printReport(); });
 
       // النقر على عملية: إعادة استخدام عرض تفاصيل العملية من المرحلة 3 كما هو تمامًا — عرض
       // فقط، بلا تعديل أو حذف. هذا يُظهر تبويب "العمليات" بتفاصيل هذا القيد (سلوك renderTransactionDetail
