@@ -1,5 +1,13 @@
 import { Capacitor } from "@capacitor/core";
 import { Printer } from "@capgo/capacitor-printer";
+async function printReport() {
+  if (Capacitor.isNativePlatform()) {
+    await Printer.printWebView({ name: "تقرير إسناد" });
+  } else {
+    window.print();
+  }
+}
+
 // ============================================================
 // إسناد — تطبيق الويب (PWA). كل شاشة تستدعي Repository الحقيقي فقط.
 // لا يوجد أي state مستقل عن قاعدة البيانات — كل عرض يُعاد تحميله من التخزين.
