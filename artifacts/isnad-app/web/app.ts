@@ -1,4 +1,6 @@
 import { Capacitor } from "@capacitor/core";
+import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
 import { Printer } from "@capgo/capacitor-printer";
 async function printReport() {
   if (Capacitor.isNativePlatform()) {
@@ -26,7 +28,7 @@ import { Repository } from "../src/repository";
 import { DistributionInput } from "../src/distribution";
 import { buildAccountLedgerReport, buildTransactionLogReport, renderReportToHtml } from "../src/reports";
 import { Currency } from "../src/currency";
-import { BackupFile, validateBackupFile } from "../src/backup";
+import { createBackupFileName, parseBackupFileJson } from "../src/backup";
 import { formatPeriodLabel } from "../src/periodDisplay";
 import {
   calculateDashboardMetrics,
@@ -1808,17 +1810,44 @@ async function renderSettingsScreen() {
     }
   });
 
-  document.getElementById("btn-export-backup")!.addEventListener("click", async () => {
-    const areaEl = document.getElementById("backup-export-area")!;
-    try {
-      const backup: BackupFile = await repo.exportBackup();
-      const json = JSON.stringify(backup, null, 2);
-      const fileName = `isnad-backup-${backup.exportedAt.replace(/[:.]/g, "-")}.json`;
+  const showBackupMessage = (container: HTMLElement, className: string, message: string) => {
+    const messageElement = document.createElement("div");
+    messageElement.className = className;
+    messageElement.textContent = message;
+    container.replaceChildren(messageElement);
+  };
 
-      // محاولة تنزيل مباشر عبر Blob (تعمل كاملة في متصفح/PWA عادي). في بعض بيئات
-      // WebView على أندرويد قد لا يُشغِّل هذا مدير تنزيل النظام تلقائيًا — لهذا نعرض
-      // أيضًا المحتوى كنص قابل للنسخ اليدوي كحل بديل مضمون العمل في كل الحالات.
-      try {
+  document.getElementById("btn-export-backup")!.addEventListener("click", async (event) => {
+    const areaEl = document.getElementById("backup-export-area")!;
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    try {
+      areaEl.replaceChildren();
+      const backup = await repo.exportBackup({
+        financialPeriodDuration: getFinancialPeriodDuration(),
+      });
+      const json = JSON.stringify(backup, null, 2);
+      const fileName = createBackupFileName(backup.exportedAt);
+
+      if (Capacitor.isNativePlatform()) {
+        const { uri } = await Filesystem.writeFile({
+          path: fileName,
+          data: json,
+          directory: Directory.Cache,
+          encoding: Encoding.UTF8,
+        });
+        await Share.share({
+          title: "نسخة إسناد الاحتياطية",
+          text: "اختر تطبيق الملفات أو التنزيلات لحفظ نسخة إسناد على الجهاز.",
+          dialogTitle: "حفظ نسخة إسناد الاحتياطية",
+          files: [uri],
+        });
+        showBackupMessage(
+          areaEl,
+          "success",
+          `تم تجهيز الملف ${fileName}. اختر تطبيق الملفات أو التنزيلات من نافذة المشاركة لحفظه على الجهاز.`,
+        );
+      } else {
         const blob = new Blob([json], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -1827,18 +1856,13 @@ async function renderSettingsScreen() {
         document.body.appendChild(a);
         a.click();
         a.remove();
-        URL.revokeObjectURL(url);
-      } catch {
-        // تجاهل فشل التنزيل المباشر — النص أدناه يبقى متاحًا دائمًا كبديل يدوي
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        showBackupMessage(areaEl, "success", `تم تنزيل ملف النسخة الاحتياطية: ${fileName}`);
       }
-
-      areaEl.innerHTML = `
-        <div class="success">تم إنشاء النسخة الاحتياطية (${fileName}). إن لم يبدأ التنزيل تلقائيًا، انسخ المحتوى أدناه واحفظه في ملف ‎.json يدويًا.</div>
-        <label>محتوى النسخة الاحتياطية</label>
-        <textarea id="backup-json-text" readonly rows="6" style="width:100%; font-family:monospace; font-size:12px; padding:8px; border:1px solid var(--border); border-radius:8px;">${json}</textarea>
-      `;
     } catch (e) {
-      areaEl.innerHTML = `<div class="error">تعذَّر إنشاء النسخة الاحتياطية: ${(e as Error).message}</div>`;
+      showBackupMessage(areaEl, "error", `تعذَّر إنشاء ملف النسخة الاحتياطية: ${(e as Error).message}`);
+    } finally {
+      button.disabled = false;
     }
   });
 
@@ -1846,36 +1870,46 @@ async function renderSettingsScreen() {
   document.getElementById("btn-restore-backup")!.addEventListener("click", () => restoreInput.click());
   restoreInput.addEventListener("change", async () => {
     const msgEl = document.getElementById("restore-msg")!;
-    msgEl.innerHTML = "";
+    msgEl.replaceChildren();
     const file = restoreInput.files?.[0];
     if (!file) return;
 
     try {
       const text = await file.text();
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        throw new Error("الملف المختار ليس JSON صالحًا — تم رفضه دون أي تغيير في البيانات الحالية.");
-      }
+      const validated = parseBackupFileJson(text);
 
-      // خطوة 1-2: تحقق كامل من البنية وتوافق schemaVersion قبل أي تأكيد أو أي لمس للتخزين
-      const validated = validateBackupFile(parsed);
-
-      // خطوة 4: تحذير واضح قبل الاستعادة الفعلية فقط بعد التأكد من صحة الملف
       const confirmed = window.confirm(
         `سيتم استبدال جميع البيانات الحالية بالكامل بمحتوى هذا الملف (تاريخ التصدير: ${validated.exportedAt}).\nهذا الإجراء لا يمكن التراجع عنه. هل تريد المتابعة؟`
       );
       if (!confirmed) {
-        msgEl.innerHTML = `<div class="muted">أُلغيت عملية الاستعادة.</div>`;
+        showBackupMessage(msgEl, "muted", "أُلغيت عملية الاستعادة، ولم تتغير البيانات الحالية.");
         return;
       }
 
-      // خطوة 5: الاستبدال الفعلي عبر storage.replaceAllData (ذرّي قدر الإمكان لكل تنفيذ تخزين)
-      await repo.restoreBackup(validated);
-      msgEl.innerHTML = `<div class="success">تمت الاستعادة بنجاح. أعِد فتح أي شاشة أخرى لرؤية البيانات المستعادة.</div>`;
+      const previousDuration = getFinancialPeriodDuration();
+      const restoredDuration = validated.appSettings?.financialPeriodDuration;
+      let preferenceUpdated = false;
+      try {
+        if (restoredDuration !== undefined) {
+          saveFinancialPeriodDuration(window.localStorage, restoredDuration);
+          preferenceUpdated = true;
+        }
+        await repo.restoreBackup(validated);
+      } catch (restoreError) {
+        if (preferenceUpdated) {
+          try {
+            saveFinancialPeriodDuration(window.localStorage, previousDuration);
+          } catch (rollbackError) {
+            throw new Error(
+              `فشلت استعادة البيانات، وتعذر إرجاع إعداد مدة الفترة السابق: ${(rollbackError as Error).message}`,
+            );
+          }
+        }
+        throw restoreError;
+      }
+      showBackupMessage(msgEl, "success", "تمت استعادة النسخة الاحتياطية بنجاح. ستظهر البيانات المستعادة عند فتح الشاشات.");
     } catch (e) {
-      msgEl.innerHTML = `<div class="error">${(e as Error).message}</div>`;
+      showBackupMessage(msgEl, "error", `تعذرت الاستعادة: ${(e as Error).message}`);
     } finally {
       restoreInput.value = "";
     }

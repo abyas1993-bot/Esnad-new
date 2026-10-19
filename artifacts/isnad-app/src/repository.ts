@@ -10,7 +10,8 @@ import { runDistribution, DistributionInput, DistributionResult, ExpenseInput, G
 import { closePeriod, applyCarriedForward, PeriodAccountActual, PeriodCloseResult } from "./period";
 import { StorageAdapter, FinancialPeriodRecord, AccountPlanningSettings } from "./storage";
 import { Currency, AccountCurrencyLink, DEFAULT_CURRENCY, DuplicateCurrencyCodeError, validateCurrencyInput } from "./currency";
-import { BackupFile, BACKUP_SCHEMA_VERSION, validateBackupFile } from "./backup";
+import { createBackupFile, restoreBackupData } from "./backup";
+import type { BackupAppSettings, BackupFile } from "./backup";
 
 /** يُرمى عند محاولة تعديل أو حذف عملية تخص فترة مالية مغلقة بالفعل (الملاحظة 4). */
 export class ClosedPeriodEditError extends Error {
@@ -526,7 +527,7 @@ export class Repository {
 
   // ---------------- النسخ الاحتياطي والاستعادة (الملاحظة 1، §6-7) ----------------
   /** يبني نسخة احتياطية كاملة من كل مخازن البيانات السبعة كما هي الآن فعليًا في التخزين. */
-  async exportBackup(): Promise<BackupFile> {
+  async exportBackup(appSettings?: BackupAppSettings): Promise<BackupFile> {
     const [accounts, journalEntries, periods, periodCloseResults, planningSettings, currencies, accountCurrencyLinks] = await Promise.all([
       this.storage.getAllAccounts(),
       this.storage.getAllJournalEntries(),
@@ -536,11 +537,10 @@ export class Repository {
       this.storage.getAllCurrencies(),
       this.storage.getAllAccountCurrencyLinks(),
     ]);
-    return {
-      schemaVersion: BACKUP_SCHEMA_VERSION,
-      exportedAt: new Date().toISOString(),
-      data: { accounts, journalEntries, periods, periodCloseResults, planningSettings, currencies, accountCurrencyLinks },
-    };
+    return createBackupFile(
+      { accounts, journalEntries, periods, periodCloseResults, planningSettings, currencies, accountCurrencyLinks },
+      appSettings,
+    );
   }
 
   /**
@@ -552,9 +552,7 @@ export class Repository {
    * الاستبدال نفسه يتم عبر StorageAdapter.replaceAllData بأقصى ذرية ممكنة لكل تنفيذ.
    */
   async restoreBackup(raw: unknown): Promise<BackupFile> {
-    const validated = validateBackupFile(raw);
-    await this.storage.replaceAllData(validated.data);
-    return validated;
+    return restoreBackupData(raw, (data) => this.storage.replaceAllData(data));
   }
 }
 
