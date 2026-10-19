@@ -4,8 +4,8 @@
 // مصمَّمة لتوسّع مستقبلي: كل نوع تقرير هو دالة بناء مستقلة تعيد ReportDocument موحَّد،
 // قابل للعرض/الطباعة بأي شكل (HTML الآن، PDF/تصدير لاحقًا) دون تغيير هذه الطبقة أو النواة.
 // ============================================================
-import { Account, JournalEntry, JournalLine } from "./types";
-import { Currency } from "./currency";
+import type { Account, JournalEntry, JournalLine } from "./types";
+import type { Currency } from "./currency";
 
 /** بنية موحَّدة لأي تقرير — كل الأنواع المستقبلية (مصروفات/أوعية/ديون/أهداف/إغلاق/خطة) تنتج نفس الشكل. */
 export interface ReportDocument {
@@ -260,24 +260,35 @@ export function buildTransactionLogReport(input: TransactionLogReportInput): Tra
  * أي بنية أخرى — عام تمامًا لأي نوع تقرير حالي أو مستقبلي. لا معرّفات داخلية تظهر هنا إطلاقًا.
  */
 export function renderReportToHtml(doc: ReportDocument): string {
-  const rows = doc.rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join("")}</tr>`).join("");
+  const escapeHtml = (value: string) =>
+    value.replace(/[&<>"']/g, (character) => {
+      const entities: Record<string, string> = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;",
+      };
+      return entities[character];
+    });
+  const rows = doc.rows.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join("")}</tr>`).join("");
   const totals = doc.totals
     ? `<div class="report-totals">${Object.entries(doc.totals)
-        .map(([k, v]) => `<div class="report-total-row${k.includes("النهائي") ? " final" : ""}"><span>${k}</span><span>${v}</span></div>`)
+        .map(([k, v]) => `<div class="report-total-row${k.includes("النهائي") ? " final" : ""}"><span>${escapeHtml(k)}</span><span>${escapeHtml(v)}</span></div>`)
         .join("")}</div>`
     : "";
   return `
     <div class="report-doc">
       <div class="report-header">
         <div class="report-app-name">إسناد — مديرك المالي الشخصي</div>
-        <h1>${doc.title}</h1>
-        <div class="report-meta">${doc.periodLabel}</div>
+        <h1>${escapeHtml(doc.title)}</h1>
+        <div class="report-meta">${escapeHtml(doc.periodLabel)}</div>
       </div>
       <table class="report-table">
-        <thead><tr>${doc.columns.map((c) => `<th>${c}</th>`).join("")}</tr></thead>
+        <thead><tr>${doc.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr></thead>
         <tbody>${rows || `<tr><td colspan="${doc.columns.length}">لا عمليات ضمن هذه الفترة.</td></tr>`}</tbody>
       </table>
       ${totals}
-      <div class="report-footer">مستند مُنشأ إلكترونيًا في ${doc.generatedAt}</div>
+      <div class="report-footer">مستند مُنشأ إلكترونيًا في ${escapeHtml(doc.generatedAt)}</div>
     </div>`;
 }

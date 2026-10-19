@@ -13,7 +13,14 @@ async function printReport() {
 // لا يوجد أي state مستقل عن قاعدة البيانات — كل عرض يُعاد تحميله من التخزين.
 // ============================================================
 import { Account, AccountCategory, ExpensePriority, GoalPriority, DebtPriority, JournalEntry, ACCOUNT_GROUPS } from "../src/types";
-import { recordIncome, recordExpense, recordTransfer, recordRecurringDebtPayment, recordOneTimeDebtPayment } from "../src/transactions";
+import {
+  recordIncome,
+  recordExpense,
+  recordTransfer,
+  recordRecurringDebtPayment,
+  recordOneTimeDebtPayment,
+  recordGoalFunding,
+} from "../src/transactions";
 import { IndexedDBStorageAdapter, AccountPlanningSettings, validatePlanningSettings } from "../src/storage";
 import { Repository } from "../src/repository";
 import { DistributionInput } from "../src/distribution";
@@ -109,6 +116,17 @@ navButtons.forEach((b) =>
 function fmt(n: number): string {
   // أرقام غربية صراحة (وليس هندية عربية) للوضوح المالي — شائع في التطبيقات المالية العربية
   return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+function escapeHtml(value: string): string {
+  const entities: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  };
+  return value.replace(/[&<>"']/g, (character) => entities[character]);
 }
 
 const CATEGORY_LABELS: Record<AccountCategory, string> = {
@@ -980,7 +998,7 @@ function renderTxRow(e: JournalEntry & { displayOperationNumber: string }, accNa
         <span class="tx-amount">${fmt(amount)}</span>
       </div>
       <div class="muted">${linesSummary}</div>
-      ${e.description ? `<div class="muted">${e.description}</div>` : ""}
+      ${e.description ? `<div class="muted">${escapeHtml(e.description)}</div>` : ""}
     </div>`;
 }
 
@@ -989,6 +1007,7 @@ function inferFormTypeForEntry(e: JournalEntry, accounts: Account[]): string {
   if (e.transactionType === "income") return "income";
   if (e.transactionType === "expense") return "expense";
   if (e.transactionType === "transfer") return "transfer";
+  if (e.transactionType === "goal_funding") return "goal_funding";
   if (e.transactionType === "direct_entry") return "direct_entry";
   if (e.transactionType === "debt_payment") {
     const debitAcc = accounts.find((a) => a.id === e.lines.find((l) => l.direction === "DEBIT")?.accountId);
@@ -1005,6 +1024,7 @@ async function renderTransactionForm() {
   const pots = accounts.filter((a) => a.category === "pot");
   const incomeSources = accounts.filter((a) => a.category === "income_source");
   const expenses = accounts.filter((a) => a.category === "expense");
+  const goals = accounts.filter((a) => a.category === "goal");
   const recurringDebts = accounts.filter((a) => a.category === "recurring_debt");
   const oneTimeDebts = accounts.filter((a) => a.category === "one_time_debt");
 
@@ -1041,6 +1061,7 @@ async function renderTransactionForm() {
         <option value="transfer" ${initialType === "transfer" ? "selected" : ""}>تحويل بين أوعية</option>
         <option value="recurring_debt_payment" ${initialType === "recurring_debt_payment" ? "selected" : ""}>سداد دين مستمر</option>
         <option value="one_time_debt_payment" ${initialType === "one_time_debt_payment" ? "selected" : ""}>سداد دين لمرة واحدة</option>
+        <option value="goal_funding" ${initialType === "goal_funding" ? "selected" : ""}>تمويل هدف</option>
         <option value="direct_entry" ${initialType === "direct_entry" ? "selected" : ""}>قيد مباشر</option>
       </select>
       <div id="tx-fields"></div>
@@ -1048,6 +1069,8 @@ async function renderTransactionForm() {
       <input id="tx-amount" type="number" min="0" step="0.01" value="${prefillAmount ?? ""}" />
       <label>التاريخ</label>
       <input id="tx-date" type="date" value="${editingEntry?.entryDate ?? new Date().toISOString().slice(0, 10)}" />
+      <label for="tx-description">البيان / الملاحظة (اختياري)</label>
+      <input id="tx-description" type="text" placeholder="مثال: فاتورة الكهرباء لشهر أكتوبر" value="${escapeHtml(editingEntry?.description ?? "")}" />
       <button class="primary" id="btn-submit-tx">${editingEntry ? "حفظ التعديلات" : "تسجيل العملية (قيد مزدوج)"}</button>
       <div id="tx-msg"></div>
     </div>
@@ -1094,6 +1117,12 @@ async function renderTransactionForm() {
         <select id="tx-odebt">${oneTimeDebts.length ? accOptions(oneTimeDebts, prefillDebitId) : `<option value="">لا يوجد</option>`}</select>
         <label>الوعاء المدفوع منه</label>
         <select id="tx-pot">${potOptions(prefillCreditId)}</select>`;
+    } else if (t === "goal_funding") {
+      fieldsEl.innerHTML = `
+        <label>الهدف</label>
+        <select id="tx-goal">${goals.length ? accOptions(goals, prefillDebitId) : `<option value="">لا يوجد — أضف هدفًا أولًا من شاشة الحسابات</option>`}</select>
+        <label>الوعاء المموِّل</label>
+        <select id="tx-pot">${potOptions(prefillCreditId)}</select>`;
     } else if (t === "direct_entry") {
       // قيد مباشر بين أي حسابين — بلا حقل "الوعاء" إطلاقًا، والاختيار من كل الحسابات بغض النظر عن الفئة.
       const allAccountOptions = (id?: string) => accounts.map((a) => `<option value="${a.id}" ${a.id === id ? "selected" : ""}>${a.name} (${CATEGORY_LABELS[a.category]})</option>`).join("");
@@ -1101,9 +1130,7 @@ async function renderTransactionForm() {
         <label>الحساب المدين</label>
         <select id="tx-direct-debit">${accounts.length ? allAccountOptions(prefillDebitId) : `<option value="">لا توجد حسابات — أضف حسابين على الأقل أولًا</option>`}</select>
         <label>الحساب الدائن</label>
-        <select id="tx-direct-credit">${accounts.length ? allAccountOptions(prefillCreditId) : `<option value="">لا توجد حسابات — أضف حسابين على الأقل أولًا</option>`}</select>
-        <label>الوصف (اختياري)</label>
-        <input id="tx-direct-desc" type="text" placeholder="مثال: تسوية بين حسابين" value="${editingEntry?.description ?? ""}" />`;
+        <select id="tx-direct-credit">${accounts.length ? allAccountOptions(prefillCreditId) : `<option value="">لا توجد حسابات — أضف حسابين على الأقل أولًا</option>`}</select>`;
     }
   }
   typeEl.addEventListener("change", renderFields);
@@ -1114,6 +1141,7 @@ async function renderTransactionForm() {
     msgEl.innerHTML = "";
     const amount = Number((document.getElementById("tx-amount") as HTMLInputElement).value);
     const date = (document.getElementById("tx-date") as HTMLInputElement).value;
+    const description = (document.getElementById("tx-description") as HTMLInputElement).value.trim() || undefined;
     const t = typeEl.value;
     try {
       if (!amount || amount <= 0) throw new Error("المبلغ يجب أن يكون رقمًا موجبًا.");
@@ -1126,35 +1154,39 @@ async function renderTransactionForm() {
           const source = accounts.find((a) => a.id === (document.getElementById("tx-income-source") as HTMLSelectElement).value);
           const pot = accounts.find((a) => a.id === (document.getElementById("tx-pot") as HTMLSelectElement).value);
           if (!source || !pot) throw new Error("يجب اختيار مصدر الدخل والوعاء.");
-          await repo.updateJournalEntryAndPersist(editingEntry.id, recordIncome(source, pot, amount, date, periodId));
+          await repo.updateJournalEntryAndPersist(editingEntry.id, recordIncome(source, pot, amount, date, periodId, description));
         } else if (t === "expense") {
           const cat = accounts.find((a) => a.id === (document.getElementById("tx-expense-cat") as HTMLSelectElement).value);
           const pot = accounts.find((a) => a.id === (document.getElementById("tx-pot") as HTMLSelectElement).value);
           if (!cat || !pot) throw new Error("يجب اختيار فئة المصروف والوعاء.");
           // رصيد الوعاء *باستثناء* النسخة القديمة من هذه العملية نفسها — تحقق حد صحيح عند التعديل.
           const potBalance = await repo.getAccountBalanceExcludingEntry(pot.id, editingEntry.id);
-          await repo.updateJournalEntryAndPersist(editingEntry.id, recordExpense(cat, pot, amount, date, periodId, false, potBalance));
+          await repo.updateJournalEntryAndPersist(editingEntry.id, recordExpense(cat, pot, amount, date, periodId, false, potBalance, description));
         } else if (t === "transfer") {
           const from = accounts.find((a) => a.id === (document.getElementById("tx-pot-from") as HTMLSelectElement).value);
           const to = accounts.find((a) => a.id === (document.getElementById("tx-pot-to") as HTMLSelectElement).value);
           if (!from || !to) throw new Error("يجب اختيار الوعاءين.");
           if (from.id === to.id) throw new Error("لا يمكن التحويل لنفس الوعاء.");
-          await repo.updateJournalEntryAndPersist(editingEntry.id, recordTransfer(from, to, amount, date, periodId));
+          await repo.updateJournalEntryAndPersist(editingEntry.id, recordTransfer(from, to, amount, date, periodId, description));
         } else if (t === "recurring_debt_payment") {
           const debt = accounts.find((a) => a.id === (document.getElementById("tx-rdebt") as HTMLSelectElement).value);
           const pot = accounts.find((a) => a.id === (document.getElementById("tx-pot") as HTMLSelectElement).value);
           if (!debt || !pot) throw new Error("يجب اختيار الدين والوعاء.");
-          await repo.updateJournalEntryAndPersist(editingEntry.id, recordRecurringDebtPayment(debt, pot, amount, date, periodId));
+          await repo.updateJournalEntryAndPersist(editingEntry.id, recordRecurringDebtPayment(debt, pot, amount, date, periodId, description));
         } else if (t === "one_time_debt_payment") {
           const debt = accounts.find((a) => a.id === (document.getElementById("tx-odebt") as HTMLSelectElement).value);
           const pot = accounts.find((a) => a.id === (document.getElementById("tx-pot") as HTMLSelectElement).value);
           if (!debt || !pot) throw new Error("يجب اختيار الدين والوعاء.");
           const currentBalance = await repo.getAccountBalanceExcludingEntry(debt.id, editingEntry.id);
-          await repo.updateJournalEntryAndPersist(editingEntry.id, recordOneTimeDebtPayment(debt, pot, amount, date, periodId, currentBalance));
+          await repo.updateJournalEntryAndPersist(editingEntry.id, recordOneTimeDebtPayment(debt, pot, amount, date, periodId, currentBalance, description));
+        } else if (t === "goal_funding") {
+          const goal = accounts.find((a) => a.id === (document.getElementById("tx-goal") as HTMLSelectElement).value);
+          const pot = accounts.find((a) => a.id === (document.getElementById("tx-pot") as HTMLSelectElement).value);
+          if (!goal || !pot) throw new Error("يجب اختيار الهدف والوعاء المموِّل.");
+          await repo.updateJournalEntryAndPersist(editingEntry.id, recordGoalFunding(goal, pot, amount, date, periodId, description));
         } else if (t === "direct_entry") {
           const debitId = (document.getElementById("tx-direct-debit") as HTMLSelectElement).value;
           const creditId = (document.getElementById("tx-direct-credit") as HTMLSelectElement).value;
-          const description = (document.getElementById("tx-direct-desc") as HTMLInputElement).value.trim() || undefined;
           if (!debitId || !creditId) throw new Error("يجب اختيار الحساب المدين والحساب الدائن.");
           if (debitId === creditId) throw new Error("لا يجوز اختيار الحساب نفسه للطرفين المدين والدائن.");
           await repo.updateDirectEntryAndPersist(editingEntry.id, debitId, creditId, amount, date, description);
@@ -1179,7 +1211,7 @@ async function renderTransactionForm() {
         const pot = accounts.find((a) => a.id === potId);
         if (!source || !pot) throw new Error("يجب اختيار مصدر الدخل والوعاء.");
         const periodId = await getActivePeriodId();
-        const entry = recordIncome(source, pot, amount, date, periodId);
+        const entry = recordIncome(source, pot, amount, date, periodId, description);
         entry.operationNumber = opNumber;
         await repo.persistJournalEntry(entry);
       } else if (t === "expense") {
@@ -1190,7 +1222,7 @@ async function renderTransactionForm() {
         if (!cat || !pot) throw new Error("يجب اختيار فئة المصروف والوعاء.");
         const potBalance = await repo.getAccountBalance(pot.id);
         const periodId = await getActivePeriodId();
-        const entry = recordExpense(cat, pot, amount, date, periodId, false, potBalance);
+        const entry = recordExpense(cat, pot, amount, date, periodId, false, potBalance, description);
         entry.operationNumber = opNumber;
         await repo.persistJournalEntry(entry);
       } else if (t === "transfer") {
@@ -1201,7 +1233,7 @@ async function renderTransactionForm() {
         if (!from || !to) throw new Error("يجب اختيار الوعاءين.");
         if (from.id === to.id) throw new Error("لا يمكن التحويل لنفس الوعاء.");
         const periodId = await getActivePeriodId();
-        const entry = recordTransfer(from, to, amount, date, periodId);
+        const entry = recordTransfer(from, to, amount, date, periodId, description);
         entry.operationNumber = opNumber;
         await repo.persistJournalEntry(entry);
       } else if (t === "recurring_debt_payment") {
@@ -1211,7 +1243,7 @@ async function renderTransactionForm() {
         const pot = accounts.find((a) => a.id === potId);
         if (!debt || !pot) throw new Error("يجب اختيار الدين والوعاء.");
         const periodId = await getActivePeriodId();
-        const entry = recordRecurringDebtPayment(debt, pot, amount, date, periodId);
+        const entry = recordRecurringDebtPayment(debt, pot, amount, date, periodId, description);
         entry.operationNumber = opNumber;
         await repo.persistJournalEntry(entry);
       } else if (t === "one_time_debt_payment") {
@@ -1222,14 +1254,20 @@ async function renderTransactionForm() {
         if (!debt || !pot) throw new Error("يجب اختيار الدين والوعاء.");
         const currentBalance = await repo.getAccountBalance(debt.id);
         const periodId = await getActivePeriodId();
-        const entry = recordOneTimeDebtPayment(debt, pot, amount, date, periodId, currentBalance);
+        const entry = recordOneTimeDebtPayment(debt, pot, amount, date, periodId, currentBalance, description);
+        entry.operationNumber = opNumber;
+        await repo.persistJournalEntry(entry);
+      } else if (t === "goal_funding") {
+        const goal = accounts.find((a) => a.id === (document.getElementById("tx-goal") as HTMLSelectElement).value);
+        const pot = accounts.find((a) => a.id === (document.getElementById("tx-pot") as HTMLSelectElement).value);
+        if (!goal || !pot) throw new Error("يجب اختيار الهدف والوعاء المموِّل.");
+        const periodId = await getActivePeriodId();
+        const entry = recordGoalFunding(goal, pot, amount, date, periodId, description);
         entry.operationNumber = opNumber;
         await repo.persistJournalEntry(entry);
       } else if (t === "direct_entry") {
         const debitId = (document.getElementById("tx-direct-debit") as HTMLSelectElement).value;
         const creditId = (document.getElementById("tx-direct-credit") as HTMLSelectElement).value;
-        const descEl = document.getElementById("tx-direct-desc") as HTMLInputElement;
-        const description = descEl.value.trim() || undefined;
         if (!debitId || !creditId) throw new Error("يجب اختيار الحساب المدين والحساب الدائن.");
         if (debitId === creditId) throw new Error("لا يجوز اختيار الحساب نفسه للطرفين المدين والدائن.");
         const periodId = await getActivePeriodId();
@@ -1282,7 +1320,7 @@ async function renderTransactionDetail() {
       <div class="row"><h2>تفاصيل العملية</h2><button id="btn-back-detail" class="btn-secondary">رجوع</button></div>
       <div class="row"><span class="tag">#${entry.displayOperationNumber}</span><span class="muted">${entry.entryDate}</span></div>
       <div style="margin-top:10px;"><span class="tx-type">${typeLabel}</span></div>
-      ${entry.description ? `<div class="muted" style="margin-top:6px;">${entry.description}</div>` : ""}
+      ${entry.description ? `<div class="muted" style="margin-top:6px;"><b>البيان / الملاحظة:</b> ${escapeHtml(entry.description)}</div>` : ""}
       <div style="margin-top:12px; font-weight:700;">${fmt(amount)}</div>
       <div class="muted" style="margin-top:14px;">تفاصيل القيد المحاسبي:</div>
       <div style="margin-top:6px;">${linesHtml}</div>

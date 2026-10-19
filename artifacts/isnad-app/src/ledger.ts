@@ -1,14 +1,8 @@
 // ============================================================
 // إسناد — نواة دفتر اليومية (القيد المزدوج)
 // ============================================================
-import {
-  Account,
-  AccountCategory,
-  CATEGORY_TO_TYPE,
-  TYPE_NORMAL_BALANCE,
-  JournalEntry,
-  JournalLine,
-} from "./types";
+import { CATEGORY_TO_TYPE, TYPE_NORMAL_BALANCE } from "./types";
+import type { Account, AccountCategory, JournalEntry, JournalLine } from "./types";
 
 export class UnbalancedEntryError extends Error {
   constructor(debitTotal: number, creditTotal: number) {

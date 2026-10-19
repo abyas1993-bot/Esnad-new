@@ -1,7 +1,7 @@
 // ============================================================
 // إسناد — طبقة تسجيل العمليات (فوق نواة دفتر اليومية)
 // ============================================================
-import { Account, JournalEntry } from "./types";
+import type { Account, JournalEntry } from "./types";
 import { assertAccountCategory, createJournalEntry } from "./ledger";
 
 let seq = 0;
@@ -11,7 +11,7 @@ let seq = 0;
  * فتتصادم المعرّفات بين الجلسات (مثال: "je_1" يتكرر بعد كل reload) ويُرفَض قيد صحيح
  * محاسبيًا خطأً بسبب تصادم معرّف وهمي — وليس أي خلل في قواعد القيد المزدوج نفسها.
  * الإصلاح: دمج الوقت الفعلي + جزء عشوائي، فريد عمليًا عبر الجلسات وإعادة التحميل،
- * دون أي تغيير في منطق أو توقيع أي دالة تسجيل عملية أدناه.
+ * دون أي تغيير في منطق القيد المزدوج نفسه.
  */
 function nextId(prefix: string): string {
   seq += 1;
@@ -24,7 +24,8 @@ export function recordIncome(
   pot: Account,
   amount: number,
   date: string,
-  periodId: string
+  periodId: string,
+  description?: string
 ): JournalEntry {
   assertAccountCategory(incomeSource, "income_source");
   assertAccountCategory(pot, "pot");
@@ -32,6 +33,7 @@ export function recordIncome(
     id: nextId("je"),
     entryDate: date,
     transactionType: "income",
+    description,
     periodId,
     lines: [
       { accountId: pot.id, direction: "DEBIT", amount },
@@ -47,7 +49,8 @@ export function recordExpense(
   date: string,
   periodId: string,
   allowNegativePot = false,
-  currentPotBalance?: number
+  currentPotBalance?: number,
+  description?: string
 ): JournalEntry {
   assertAccountCategory(expenseCategory, "expense");
   assertAccountCategory(pot, "pot");
@@ -60,6 +63,7 @@ export function recordExpense(
     id: nextId("je"),
     entryDate: date,
     transactionType: "expense",
+    description,
     periodId,
     lines: [
       { accountId: expenseCategory.id, direction: "DEBIT", amount },
@@ -73,7 +77,8 @@ export function recordTransfer(
   toPot: Account,
   amount: number,
   date: string,
-  periodId: string
+  periodId: string,
+  description?: string
 ): JournalEntry {
   assertAccountCategory(fromPot, "pot");
   assertAccountCategory(toPot, "pot");
@@ -81,6 +86,7 @@ export function recordTransfer(
     id: nextId("je"),
     entryDate: date,
     transactionType: "transfer",
+    description,
     periodId,
     lines: [
       { accountId: toPot.id, direction: "DEBIT", amount },
@@ -94,7 +100,8 @@ export function recordRecurringDebtPayment(
   pot: Account,
   amount: number,
   date: string,
-  periodId: string
+  periodId: string,
+  description?: string
 ): JournalEntry {
   assertAccountCategory(debtAccount, "recurring_debt");
   assertAccountCategory(pot, "pot");
@@ -102,6 +109,7 @@ export function recordRecurringDebtPayment(
     id: nextId("je"),
     entryDate: date,
     transactionType: "debt_payment",
+    description,
     periodId,
     lines: [
       { accountId: debtAccount.id, direction: "DEBIT", amount },
@@ -116,7 +124,8 @@ export function recordOneTimeDebtPayment(
   amount: number,
   date: string,
   periodId: string,
-  currentDebtBalance: number
+  currentDebtBalance: number,
+  description?: string
 ): JournalEntry {
   assertAccountCategory(debtAccount, "one_time_debt");
   assertAccountCategory(pot, "pot");
@@ -129,6 +138,7 @@ export function recordOneTimeDebtPayment(
     id: nextId("je"),
     entryDate: date,
     transactionType: "debt_payment",
+    description,
     periodId,
     lines: [
       { accountId: debtAccount.id, direction: "DEBIT", amount },
@@ -142,7 +152,8 @@ export function recordGoalFunding(
   pot: Account,
   amount: number,
   date: string,
-  periodId: string
+  periodId: string,
+  description?: string
 ): JournalEntry {
   assertAccountCategory(goal, "goal");
   assertAccountCategory(pot, "pot");
@@ -150,6 +161,7 @@ export function recordGoalFunding(
     id: nextId("je"),
     entryDate: date,
     transactionType: "goal_funding",
+    description,
     periodId,
     lines: [
       { accountId: goal.id, direction: "DEBIT", amount },
