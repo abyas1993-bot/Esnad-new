@@ -27,22 +27,52 @@ import {
   getProgressRatio,
   progressColor,
 } from "../src/dashboardMetrics";
+import {
+  FINANCIAL_PERIOD_OPTIONS,
+  getCalendarPeriodDates,
+  getFinancialPeriodDurationLabel,
+  getNextCalendarPeriodDates,
+  isFinancialPeriodDuration,
+  loadFinancialPeriodDuration,
+  saveFinancialPeriodDuration,
+} from "../src/financialPeriods";
+import type { FinancialPeriodDuration } from "../src/financialPeriods";
 
 // المخزن الحقيقي الوحيد لهذا التطبيق — IndexedDB كما طُلب صراحة، وليس FileStorageAdapter.
 const storage = new IndexedDBStorageAdapter();
 const repo = new Repository(storage);
 
-// لا معرّف فترة ثابت — الفترة النشطة تُقرأ دائمًا من قاعدة البيانات (الفترة الوحيدة بحالة "open").
-// هذا ضروري لتعمل دورة "إغلاق → فتح فترة تالية → توزيع يعكس الفترة الجديدة" بشكل صحيح.
-async function getActivePeriodId(): Promise<string> {
+function getFinancialPeriodDuration(): FinancialPeriodDuration {
+  return loadFinancialPeriodDuration(window.localStorage);
+}
+
+function localDateOnly(date: Date = new Date()): string {
+  return `${String(date.getFullYear()).padStart(4, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+// لا معرّف فترة ثابت — الفترة النشطة تُقرأ دائمًا من قاعدة البيانات.
+// تُسوّى حدود الفترة المفتوحة فقط وفق الإعداد الحالي، مع الإبقاء على معرّفها وقيودها.
+async function getActivePeriod(): Promise<import("../src/storage").FinancialPeriodRecord> {
   const all = await storage.getAllFinancialPeriods();
   const open = all.find((p) => p.status === "open");
-  if (open) return open.id;
-  // لا فترة مفتوحة إطلاقًا (أول تشغيل) — نفتح واحدة تلقائيًا
-  const id = "period_" + Date.now();
-  const today = new Date().toISOString().slice(0, 10);
-  await repo.openPeriod({ id, startDate: today, endDate: today, status: "open" });
-  return id;
+  const duration = getFinancialPeriodDuration();
+  if (open) {
+    const dates = getCalendarPeriodDates(open.startDate, duration);
+    if (dates && (dates.startDate !== open.startDate || dates.endDate !== open.endDate)) {
+      return repo.updateOpenPeriodDates(open.id, dates);
+    }
+    return open;
+  }
+
+  const dates = getCalendarPeriodDates(localDateOnly(), duration);
+  if (!dates) throw new Error("تعذر إنشاء فترة مالية: تاريخ اليوم غير صالح.");
+  const period = { id: "period_" + Date.now(), ...dates, status: "open" as const };
+  await repo.openPeriod(period);
+  return period;
+}
+
+async function getActivePeriodId(): Promise<string> {
+  return (await getActivePeriod()).id;
 }
 
 let seq = 0;
@@ -116,6 +146,7 @@ async function renderDashboardScreen() {
   const accounts = await repo.getAllAccounts();
   const periodId = await getActivePeriodId();
   const period = await repo.getPeriod(periodId);
+  const periodDuration = getFinancialPeriodDuration();
   const periodEntries = await storage.getJournalEntriesForPeriod(periodId);
   const expenseAccounts = accounts.filter((a) => a.category === "expense");
   const expenseSettings = await Promise.all(expenseAccounts.map((a) => repo.getPlanningSettings(a.id)));
@@ -189,7 +220,7 @@ async function renderDashboardScreen() {
 
   mainEl.innerHTML = `
     <div class="card">
-      <h2>الفترة الحالية: ${period ? formatPeriodLabel(period) : "—"}</h2>
+      <h2>الفترة الحالية (${getFinancialPeriodDurationLabel(periodDuration)}): ${period ? formatPeriodLabel(period) : "—"}</h2>
       <div class="row"><span>الدخل الفعلي هذه الفترة</span><b class="balance-pos">${fmt(incomeActual)}</b></div>
       <div class="row"><span>المصروفات الفعلية هذه الفترة</span><b class="balance-neg">${fmt(expenseActual)}</b></div>
       <div class="row"><span>صافي التدفق النقدي</span><b class="${netFlow >= 0 ? "balance-pos" : "balance-neg"}">${fmt(netFlow)}</b></div>
@@ -1437,6 +1468,7 @@ async function renderClosingScreen() {
   const accounts = await repo.getAllAccounts();
   const periodId = await getActivePeriodId();
   const period = await repo.getPeriod(periodId);
+  const periodDuration = getFinancialPeriodDuration();
   if (!period) return; // getActivePeriodId يضمن وجودها دائمًا عمليًا
 
   const relevant = accounts.filter((a) => ["expense", "goal", "one_time_debt", "recurring_debt", "reserve"].includes(a.category));
@@ -1463,7 +1495,7 @@ async function renderClosingScreen() {
   mainEl.innerHTML = `
     ${banner}
     <div class="card">
-      <h2>الفترة الحالية: ${formatPeriodLabel(period)}</h2>
+      <h2>الفترة الحالية (${getFinancialPeriodDurationLabel(periodDuration)}): ${formatPeriodLabel(period)}</h2>
       <div class="muted">الحالة: ${period.status === "open" ? "مفتوحة" : "مغلقة"}</div>
     </div>
     ${
@@ -1518,9 +1550,10 @@ async function renderClosingScreen() {
           };
         });
         const nextPeriodId = "period_" + Date.now();
-        const today = new Date().toISOString().slice(0, 10);
-        const result = await repo.closePeriodAndPersist(period.id, nextPeriodId, accountActuals, { startDate: today, endDate: today });
-        pendingClosingMessage = `أُغلقت الفترة بنجاح. عدد أسطر السجل التاريخي: ${result.summaryLines.length}. الفترة الجديدة المفتوحة تلقائيًا: ${formatPeriodLabel({ startDate: today, endDate: today })}`;
+        const nextPeriodDates = getNextCalendarPeriodDates(period.endDate, getFinancialPeriodDuration());
+        if (!nextPeriodDates) throw new Error("تعذر حساب حدود الفترة التالية من تاريخ نهاية الفترة الحالية.");
+        const result = await repo.closePeriodAndPersist(period.id, nextPeriodId, accountActuals, nextPeriodDates);
+        pendingClosingMessage = `أُغلقت الفترة بنجاح. عدد أسطر السجل التاريخي: ${result.summaryLines.length}. الفترة الجديدة المفتوحة تلقائيًا: ${formatPeriodLabel(nextPeriodDates)}`;
         await renderClosingScreen();
       } catch (e) {
         msgEl.innerHTML = `<div class="error">${(e as Error).message}</div>`;
@@ -1617,6 +1650,8 @@ async function renderClosingHistory() {
 async function renderSettingsScreen() {
   const currencies = await repo.getAllCurrencies();
   const defaultCurrency = await repo.getDefaultCurrency();
+  const currentPeriod = await getActivePeriod();
+  const periodDuration = getFinancialPeriodDuration();
 
   const currenciesRowsHtml = currencies
     .map((c) => {
@@ -1630,6 +1665,17 @@ async function renderSettingsScreen() {
     .join("");
 
   mainEl.innerHTML = `
+    <div class="card">
+      <h2>مدة الفترة المالية</h2>
+      <p class="muted">تبدأ الفترة من أول شهرها وتنتهي في آخر شهر من المدة المختارة. عند تغيير المدة تُحدَّث حدود الفترة المفتوحة فقط، مع الاحتفاظ بمعرّفها وعملياتها.</p>
+      <label for="financial-period-duration">المدة</label>
+      <select id="financial-period-duration">
+        ${FINANCIAL_PERIOD_OPTIONS.map((option) => `<option value="${option.months}" ${option.months === periodDuration ? "selected" : ""}>${option.label}</option>`).join("")}
+      </select>
+      <div id="current-period-duration-label" class="muted" style="margin-top:8px;">الفترة المفتوحة: ${formatPeriodLabel(currentPeriod)}</div>
+      <div id="period-duration-msg" aria-live="polite"></div>
+    </div>
+
     <div class="card">
       <h2>العملات</h2>
       <p class="muted">العملة الافتراضية تُستخدَم فقط لاقتراح عملة مبدئية عند إنشاء بيانات جديدة — لا تُغيّر عملة أي حساب أو عملية موجودة بالفعل.</p>
@@ -1660,6 +1706,43 @@ async function renderSettingsScreen() {
       </div>
     </div>
   `;
+
+  const durationSelect = document.getElementById("financial-period-duration") as HTMLSelectElement;
+  durationSelect.addEventListener("change", async () => {
+    const messageEl = document.getElementById("period-duration-msg")!;
+    const currentLabelEl = document.getElementById("current-period-duration-label")!;
+    const previousDuration = getFinancialPeriodDuration();
+    const nextDuration = Number(durationSelect.value);
+    messageEl.textContent = "";
+
+    if (!isFinancialPeriodDuration(nextDuration)) {
+      durationSelect.value = String(previousDuration);
+      messageEl.innerHTML = `<div class="error">اختيار مدة الفترة غير صالح.</div>`;
+      return;
+    }
+
+    const nextDates = getCalendarPeriodDates(currentPeriod.startDate, nextDuration);
+    if (!nextDates) {
+      durationSelect.value = String(previousDuration);
+      messageEl.innerHTML = `<div class="error">تعذر حساب حدود الفترة المفتوحة من تاريخ بدايتها.</div>`;
+      return;
+    }
+
+    try {
+      saveFinancialPeriodDuration(window.localStorage, nextDuration);
+      try {
+        await repo.updateOpenPeriodDates(currentPeriod.id, nextDates);
+      } catch (error) {
+        saveFinancialPeriodDuration(window.localStorage, previousDuration);
+        throw error;
+      }
+      currentLabelEl.textContent = `الفترة المفتوحة (${getFinancialPeriodDurationLabel(nextDuration)}): ${formatPeriodLabel(nextDates)}`;
+      messageEl.innerHTML = `<div class="success">حُفظت المدة وطُبقت على الفترة المفتوحة.</div>`;
+    } catch (error) {
+      durationSelect.value = String(previousDuration);
+      messageEl.innerHTML = `<div class="error">${(error as Error).message}</div>`;
+    }
+  });
 
   document.querySelectorAll<HTMLElement>("[data-set-default-currency]").forEach((btn) => {
     btn.addEventListener("click", async () => {

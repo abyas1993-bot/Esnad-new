@@ -230,6 +230,17 @@ export class Repository {
   async getPeriod(id: string): Promise<FinancialPeriodRecord | null> {
     return this.storage.getFinancialPeriod(id);
   }
+  async updateOpenPeriodDates(
+    periodId: string,
+    dates: { startDate: string; endDate: string },
+  ): Promise<FinancialPeriodRecord> {
+    const period = await this.storage.getFinancialPeriod(periodId);
+    if (!period) throw new Error(`الفترة ${periodId} غير موجودة — لا يمكن تحديث حدودها.`);
+    if (period.status !== "open") throw new Error("لا يمكن تغيير حدود فترة مغلقة.");
+    const updated = { ...period, ...dates };
+    await this.storage.saveFinancialPeriod(updated);
+    return updated;
+  }
 
   // ---------------- إعدادات التخطيط ----------------
   async savePlanningSettings(settings: AccountPlanningSettings): Promise<void> {
