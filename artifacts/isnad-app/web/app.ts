@@ -21,6 +21,12 @@ import { buildAccountLedgerReport, buildTransactionLogReport, renderReportToHtml
 import { Currency } from "../src/currency";
 import { BackupFile, validateBackupFile } from "../src/backup";
 import { formatPeriodLabel } from "../src/periodDisplay";
+import {
+  calculateDashboardMetrics,
+  getPeriodExpenseLimit,
+  getProgressRatio,
+  progressColor,
+} from "../src/dashboardMetrics";
 
 // المخزن الحقيقي الوحيد لهذا التطبيق — IndexedDB كما طُلب صراحة، وليس FileStorageAdapter.
 const storage = new IndexedDBStorageAdapter();
@@ -111,13 +117,16 @@ async function renderDashboardScreen() {
   const periodId = await getActivePeriodId();
   const period = await repo.getPeriod(periodId);
   const periodEntries = await storage.getJournalEntriesForPeriod(periodId);
+  const expenseAccounts = accounts.filter((a) => a.category === "expense");
+  const expenseSettings = await Promise.all(expenseAccounts.map((a) => repo.getPlanningSettings(a.id)));
+  const expenseSettingsById = new Map(expenseAccounts.map((account, index) => [account.id, expenseSettings[index]]));
 
   const pots = accounts.filter((a) => a.category === "pot");
   const potBalances = await Promise.all(pots.map((p) => repo.getAccountBalance(p.id)));
   const totalPots = potBalances.reduce((s, b) => s + b, 0);
 
-  const incomeActual = periodEntries.filter((e) => e.transactionType === "income").reduce((s, e) => s + e.lines.filter((l) => l.direction === "CREDIT").reduce((s2, l) => s2 + l.amount, 0), 0);
-  const expenseActual = periodEntries.filter((e) => e.transactionType === "expense").reduce((s, e) => s + e.lines.filter((l) => l.direction === "DEBIT").reduce((s2, l) => s2 + l.amount, 0), 0);
+  const { incomeActual, expenseActual, expenseActualByAccount } =
+    calculateDashboardMetrics(accounts, periodEntries);
   const netFlow = incomeActual - expenseActual;
 
   const debts = accounts.filter((a) => a.category === "recurring_debt" || a.category === "one_time_debt");
@@ -129,13 +138,13 @@ async function renderDashboardScreen() {
   const goalBalances = await Promise.all(goals.map((g) => repo.getAccountBalance(g.id)));
 
   const alerts: string[] = [];
-  const expensesForAlerts = accounts.filter((a) => a.category === "expense");
-  for (const e of expensesForAlerts) {
-    const s = await repo.getPlanningSettings(e.id);
+  for (const e of expenseAccounts) {
+    const s = expenseSettingsById.get(e.id);
     if (!s || s.kind !== "expense") continue;
-    const actual = periodEntries.reduce((sum, en) => sum + en.lines.filter((l) => l.accountId === e.id && l.direction === "DEBIT").reduce((s2, l) => s2 + l.amount, 0), 0);
-    if (s.monthlyMax > 0 && actual > s.monthlyMax) {
-      alerts.push(`⚠️ تجاوز "${e.name}": الفعلي (${fmt(actual)}) تجاوز الحد الأعلى (${fmt(s.monthlyMax)}) بمقدار ${fmt(actual - s.monthlyMax)}`);
+    const actual = expenseActualByAccount.get(e.id) ?? 0;
+    const periodLimit = getPeriodExpenseLimit(s.monthlyMax, period);
+    if (periodLimit !== null && actual > periodLimit) {
+      alerts.push(`⚠️ تجاوز "${e.name}": الفعلي (${fmt(actual)}) تجاوز حد الفترة (${fmt(periodLimit)}) بمقدار ${fmt(actual - periodLimit)}`);
     }
     if (s.dueDate) {
       const days = Math.ceil((new Date(s.dueDate).getTime() - Date.now()) / 86400000);
@@ -157,12 +166,37 @@ async function renderDashboardScreen() {
     if (s.maxLimit > 0 && bal >= s.maxLimit) alerts.push(`🔴 دين "${d.name}" بلغ/تجاوز حده الأعلى (${fmt(bal)}/${fmt(s.maxLimit)}) — أولوية سداد إجباري`);
   }
 
+  const budgetItems = expenseAccounts
+    .map((expense) => {
+      const settings = expenseSettingsById.get(expense.id);
+      if (!settings || settings.kind !== "expense") return "";
+      const actual = expenseActualByAccount.get(expense.id) ?? 0;
+      const periodLimit = getPeriodExpenseLimit(settings.monthlyMax, period);
+      return `
+        <div style="padding:10px 0; border-bottom:1px solid var(--border); min-width:0;">
+          <h3 style="font-size:15px; margin:0 0 8px; overflow-wrap:anywhere;">${expense.name}</h3>
+          <div class="row muted" style="flex-wrap:wrap; overflow-wrap:anywhere;">
+            <span>حد الفترة</span>
+            <b>${periodLimit === null ? "لا يوجد حد مخطط" : fmt(periodLimit)}</b>
+          </div>
+          <div class="row muted" style="flex-wrap:wrap; overflow-wrap:anywhere;">
+            <span>المبلغ المصروف</span><b>${fmt(actual)}</b>
+          </div>
+          ${progressBarHtml("نسبة المصروف", actual, periodLimit ?? 0)}
+        </div>`;
+    })
+    .join("");
+
   mainEl.innerHTML = `
     <div class="card">
       <h2>الفترة الحالية: ${period ? formatPeriodLabel(period) : "—"}</h2>
       <div class="row"><span>الدخل الفعلي هذه الفترة</span><b class="balance-pos">${fmt(incomeActual)}</b></div>
       <div class="row"><span>المصروفات الفعلية هذه الفترة</span><b class="balance-neg">${fmt(expenseActual)}</b></div>
       <div class="row"><span>صافي التدفق النقدي</span><b class="${netFlow >= 0 ? "balance-pos" : "balance-neg"}">${fmt(netFlow)}</b></div>
+    </div>
+    <div class="card">
+      <h2>متابعة الميزانية والمصروفات</h2>
+      ${budgetItems || `<div class="empty">لا توجد إعدادات تخطيط للمصروفات بعد.</div>`}
     </div>
     <div class="card">
       <h2>الأوعية المالية</h2>
@@ -1275,26 +1309,26 @@ const STAGE_LABELS: Record<number, string> = {
   8: "المرحلة 8 — الفائض النهائي → الاحتياطي",
 };
 
-/** تدرّج لوني حسب نسبة الاقتراب من الحد (§23 من المواصفة الأصلية) — عتبات ثابتة برمجيًا وليست عشوائية. */
-function progressColor(pct: number): string {
-  if (pct < 40) return "#0a5c3e"; // أخضر داكن
-  if (pct < 60) return "#4caf7d"; // أخضر فاتح
-  if (pct < 75) return "#d4c22a"; // أصفر
-  if (pct < 90) return "#e08a2e"; // برتقالي
-  if (pct < 100) return "#e0578f"; // وردي
-  if (pct <= 110) return "#e0574a"; // أحمر فاتح
-  return "#8c1f16"; // أحمر داكن — تجاوز الخطر
-}
-
 function progressBarHtml(label: string, value: number, limit: number): string {
-  const pct = limit > 0 ? Math.min(140, Math.round((value / limit) * 100)) : 0;
+  const progress = getProgressRatio(value, limit);
+  if (!progress.hasLimit || progress.percentage === null) {
+    return `
+      <div style="margin-top:8px; min-width:0;">
+        <div class="row muted" style="font-size:12px; flex-wrap:wrap; overflow-wrap:anywhere;">
+          <span>${label}</span><span>لا يوجد حد مخطط</span>
+        </div>
+      </div>`;
+  }
+  const pct = progress.percentage;
   const color = progressColor(pct);
-  const overLimit = limit > 0 && value > limit;
+  const status = value > limit ? " · تجاوز الحد" : value === limit ? " · بلغ الحد" : "";
   return `
-    <div style="margin-top:8px;">
-      <div class="row muted" style="font-size:12px;"><span>${label}</span><span>${fmt(value)} / ${fmt(limit)}${overLimit ? " ⚠️ تجاوز" : ""}</span></div>
+    <div style="margin-top:8px; min-width:0;">
+      <div class="row muted" style="font-size:12px; flex-wrap:wrap; overflow-wrap:anywhere;">
+        <span>${label}</span><span>${fmt(value)} / ${fmt(limit)} · ${pct}%${status}</span>
+      </div>
       <div style="background:#eee; border-radius:6px; height:10px; overflow:hidden;">
-        <div style="width:${Math.min(100, pct)}%; background:${color}; height:100%;"></div>
+        <div role="progressbar" aria-valuenow="${progress.fillPercentage}" aria-valuemin="0" aria-valuemax="100" aria-label="${label}" style="width:${progress.fillPercentage}%; background:${color}; height:100%;"></div>
       </div>
     </div>`;
 }
@@ -1302,7 +1336,9 @@ function progressBarHtml(label: string, value: number, limit: number): string {
 async function renderDistributionScreen() {
   const accounts = await repo.getAllAccounts();
   const periodId = await getActivePeriodId();
+  const period = await repo.getPeriod(periodId);
   const periodEntries = await storage.getJournalEntriesForPeriod(periodId);
+  const { expenseActualByAccount } = calculateDashboardMetrics(accounts, periodEntries);
 
   mainEl.innerHTML = `
     <div class="card">
@@ -1369,13 +1405,14 @@ async function renderDistributionScreen() {
           const s = await repo.getPlanningSettings(e.id);
           if (!s || s.kind !== "expense") return "";
           const plannedTotal = result.allocations.filter((a) => a.accountId === e.id).reduce((sum, a) => sum + a.amount, 0);
-          const actualTotal = periodEntries.reduce((sum, en) => sum + en.lines.filter((l) => l.accountId === e.id && l.direction === "DEBIT").reduce((s2, l) => s2 + l.amount, 0), 0);
+          const actualTotal = expenseActualByAccount.get(e.id) ?? 0;
+          const periodLimit = getPeriodExpenseLimit(s.monthlyMax, period) ?? 0;
           const diff = actualTotal - plannedTotal;
           return `
           <div class="card">
             <h2>${e.name}</h2>
-            ${progressBarHtml("المخطَّط مقابل الحد الأعلى", plannedTotal, s.monthlyMax)}
-            ${progressBarHtml("الفعلي مقابل الحد الأعلى", actualTotal, s.monthlyMax)}
+            ${progressBarHtml("المخطَّط مقابل حد الفترة", plannedTotal, periodLimit)}
+            ${progressBarHtml("الفعلي مقابل حد الفترة", actualTotal, periodLimit)}
             <div class="row muted" style="margin-top:6px;"><span>الفارق (فعلي − مخطَّط)</span><span class="${diff > 0 ? "balance-neg" : "balance-pos"}">${diff > 0 ? "+" : ""}${fmt(diff)}</span></div>
           </div>`;
         })
